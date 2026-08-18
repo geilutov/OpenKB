@@ -26,6 +26,7 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
+import traceback
 
 import litellm
 
@@ -420,23 +421,36 @@ def _llm_call(
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
-
+    #kwargs.setdefault("max_tokens", 72000)
+    # kwargs.setdefault("enable_thinking", False)  # Disable thinking for sync calls
+    # kwargs.setdefault("thinking_budget_tokens", 0)  # No thinking budget for sync calls
+    # kwargs.setdefault("reasoning_effort", "minimal")  # Minimal reasoning effort for sync calls
     spinner = _Spinner(step_name)
     spinner.start()
     t0 = time.time()
+    litellm.drop_params = True
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
-    content = response.choices[0].message.content or ""
-    truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
+    try:
+        response = litellm.completion(model=model, messages=messages, reasoning_effort="none",
+                                  max_tokens=72000, chat_template_kwargs= {
+                                                "enable_thinking": False,
+                                                "thinking_budget_tokens": 0,  
+                                            }, **kwargs)
+        content = response.choices[0].message.content or ""
+        truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
-    spinner.stop(_format_usage(time.time() - t0, response.usage))
-    logger.debug(
+        spinner.stop(_format_usage(time.time() - t0, response.usage))
+        logger.debug(
         "LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else "")
-    )
-    if raise_on_truncation and truncated:
-        raise TruncatedResponseError(
-            f"LLM [{step_name}] hit the length limit; skipping to avoid a truncated page"
         )
+        if raise_on_truncation and truncated:
+            raise TruncatedResponseError(
+                f"LLM [{step_name}] hit the length limit; skipping to avoid a truncated page"
+            )
+    except Exception as e:
+        spinner.stop("failed")
+        logger.error("LLM call [%s] failed: %s", step_name, e)
+        raise
     return content.strip()
 
 
@@ -460,13 +474,19 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+        # kwargs.setdefault("enable_thinking", False)  # Disable thinking for async calls
+        # kwargs.setdefault("thinking_budget_tokens", 0)  # No thinking budget for async calls
+        # kwargs.setdefault("reasoning_effort", "minimal")  # Minimal reasoning effort for async calls
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
-
+    #kwargs.setdefault("max_tokens", 72000)
     t0 = time.time()
-
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    litellm.drop_params = True
+    response = await litellm.acompletion(model=model, messages=messages, reasoning_effort="none",  chat_template_kwargs= {
+                                                "enable_thinking": False,
+                                                "thinking_budget_tokens": 0,  
+                                            },**kwargs)
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -474,8 +494,8 @@ async def _llm_call_async(
     sys.stdout.write(f"    {step_name}... {_format_usage(elapsed, response.usage)}\n")
     sys.stdout.flush()
     logger.debug(
-        "LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else "")
-    )
+        "LLM response [%s]:\n%s", step_name, content)
+    
     if raise_on_truncation and truncated:
         raise TruncatedResponseError(
             f"LLM [{step_name}] hit the length limit; skipping to avoid a truncated page"
@@ -493,6 +513,7 @@ async def _llm_call_page_async(
     every page-generating call so the guarantee can't be forgotten at a new
     call site.
     """
+    kwargs.setdefault("max_tokens", 95000)  # ~75k chars, enough for a long page
     return await _llm_call_async(
         model, messages, step_name, raise_on_truncation=True, bundle=bundle, **kwargs
     )
@@ -1674,6 +1695,7 @@ async def _compile_concepts(
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
+        traceback.print_exc()
         preview = plan_raw[:500] + ("..." if len(plan_raw) > 500 else "")
         logger.warning(
             "Failed to parse concepts plan: %s. Raw output (first 500 chars): %r",
@@ -2220,7 +2242,6 @@ async def compile_short_doc(
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
-
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
     content = source_path.read_text(encoding="utf-8")
