@@ -43,7 +43,7 @@ dependencies = [
     # InputTokensDetails that openai-agents 0.17.3 does not set, crashing
     # usage parsing on every response (issue #187). Pin below 2.45 until
     # openai-agents catches up.
-    "openai==2.44.0",
+    "openai==2.45.0",
     "pyyaml==6.0.3",
     "python-dotenv==1.2.2",
     "json-repair==0.59.10",
