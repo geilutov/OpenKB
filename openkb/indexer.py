@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from pageindex import IndexConfig, PageIndexClient
+from pageindex import PageIndexClient
 
-from openkb.config import resolve_concurrency, resolve_effective_config
+from openkb.config import resolve_concurrency, resolve_effective_config, wiki_dir
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,9 @@ def _normalize_page_content(raw_pages: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
 
-        raw_page = item.get("page", item.get("page_number", item.get("page_num", index)))
+        raw_page = item.get(
+            "page", item.get("page_index", item.get("page_number", item.get("page_num", index)))
+        )
         try:
             page_number = int(raw_page)
         except (TypeError, ValueError):
@@ -137,14 +139,15 @@ def _write_long_doc_artifacts(
     artifacts. Page images, when present, are written separately by the
     caller's page extractor — this helper only persists page text + summary.
     """
-    sources_dir = kb_dir / "wiki" / "sources"
+    wiki_root = wiki_dir(kb_dir)
+    sources_dir = wiki_root / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     (sources_dir / f"{doc_name}.json").write_text(
         json_mod.dumps(pages, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    summaries_dir = kb_dir / "wiki" / "summaries"
+    summaries_dir = wiki_root / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summaries_dir / f"{doc_name}.md"
     summary_path.write_text(
@@ -153,31 +156,16 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
-def _build_index_config(config: dict[str, Any]) -> IndexConfig:
-    """Build the PageIndex ``IndexConfig`` for local indexing.
-
-    Forwards the KB's ``concurrency`` setting to PageIndex, which caps how many
-    indexing LLM calls run at once (guarding against "too many open files" fd
-    exhaustion on large documents). The value is only passed when set *and* the
-    installed PageIndex's ``IndexConfig`` declares the field, so OpenKB keeps
-    working against a pinned PageIndex that predates it (``IndexConfig``
-    forbids unknown kwargs).
-    """
+def _build_index_config(config: dict[str, Any], storage_path: Path) -> dict[str, Any]:
+    """Build local indexing kwargs for the installed PageIndex client API."""
     kwargs: dict[str, Any] = {
-        "if_add_node_text": True,
-        "if_add_node_summary": True,
-        "if_add_doc_description": True,
+        "index_model": config.get("model", "gpt-5.4"),
+        "storage_path": str(storage_path),
     }
     concurrency = resolve_concurrency(config)
     if concurrency is not None:
-        if "max_concurrency" in IndexConfig.model_fields:
-            kwargs["max_concurrency"] = concurrency
-        else:
-            logger.warning(
-                "config: 'concurrency' is set but the installed PageIndex "
-                "version does not support it yet — ignoring it."
-            )
-    return IndexConfig(**kwargs)
+        kwargs["summary_concurrency"] = concurrency
+    return kwargs
 
 
 def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
@@ -193,22 +181,18 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     model: str = config.get("model", "gpt-5.4")
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
 
-    index_config = _build_index_config(config)
-
-    client = PageIndexClient(
-        api_key=pageindex_api_key or None,
-        model=model,
-        storage_path=str(openkb_dir),
-        index_config=index_config,
-    )
-    col = client.collection()
+    if pageindex_api_key:
+        client = PageIndexClient(api_key=pageindex_api_key)
+    else:
+        client = PageIndexClient(**_build_index_config(config, openkb_dir))
 
     # Add PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
     max_retries = 3
     doc_id = None
     for attempt in range(1, max_retries + 1):
         try:
-            doc_id = col.add(str(pdf_path))
+            submitted = client.submit_document(str(pdf_path), wait=True,mode="flash")
+            doc_id = submitted["doc_id"]
             logger.info(
                 "PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt
             )
@@ -233,15 +217,11 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     # orphan that pageindex.db (rolled back by the snapshot) no longer refs and
     # no reaper reclaims.
     try:
-        # Fetch complete document (metadata + structure + text)
-        doc = col.get_document(doc_id, include_text=True)
-        indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
-        description: str = doc.get("doc_description", "")
-        structure: list = doc.get("structure", [])
-
-        # Debug: print doc keys and page_count to diagnose get_page_content range
-        logger.info("Doc keys: %s", list(doc.keys()))
-        logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
+        doc = client.get_document(doc_id)
+        tree_response = client.get_tree(doc_id, node_summary=True, include_text=True)
+        indexed_doc_name: str = doc.get("name") or pdf_path.name
+        description: str = doc.get("description", "")
+        structure: list = tree_response.get("result", [])
 
         tree = {
             "doc_name": indexed_doc_name,
@@ -250,25 +230,20 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
         }
 
         # Write wiki/sources/ — per-page content
-        sources_dir = kb_dir / "wiki" / "sources"
+        sources_dir = wiki_dir(kb_dir) / "sources"
         sources_dir.mkdir(parents=True, exist_ok=True)
         images_dir = sources_dir / "images" / source_name
 
         all_pages: list[dict[str, Any]] = []
-        if pageindex_api_key:
-            # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
-            # requires a page range, so pass "1-N".
-            page_count = _get_pdf_page_count(pdf_path)
-            try:
-                all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
-            except Exception as exc:
-                logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
+        try:
+            all_pages = _fetch_document_pages(client, doc_id)
+        except Exception as exc:
+            logger.warning("PageIndex page-content fetch failed for %s: %s", pdf_path.name, exc)
 
         if not all_pages:
-            if pageindex_api_key:
-                logger.warning(
-                    "Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name
-                )
+            logger.warning(
+                "PageIndex returned no pages for %s; falling back to local pymupdf", pdf_path.name
+            )
             all_pages = _normalize_page_content(
                 _convert_pdf_to_pages(pdf_path, source_name, images_dir)
             )
@@ -286,7 +261,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
         # error still propagates so the caller (mutation coordinator) rolls back
         # everything else it snapshotted.
         try:
-            col.delete_document(doc_id)
+            client.delete_document(doc_id)
         except Exception:
             logger.warning(
                 "PageIndex cleanup of %s failed after error; blob may be orphaned", doc_id
@@ -303,8 +278,8 @@ _CLOUD_PAGE_WINDOW = 1000
 _CLOUD_PAGE_MAX = 1_000_000
 
 
-def _fetch_cloud_pages(col, doc_id: str) -> list[dict[str, Any]]:
-    """Fetch all OCR pages of a cloud doc, windowing around the 1000-page cap.
+def _fetch_document_pages(client, doc_id: str) -> list[dict[str, Any]]:
+    """Fetch all OCR pages, windowing around the 1000-page cap.
 
     ``get_page_content`` returns the whole document and uses its ``pages`` arg
     only as a client-side filter that ``parse_pages`` caps at 1000 pages — so a
@@ -322,7 +297,7 @@ def _fetch_cloud_pages(col, doc_id: str) -> list[dict[str, Any]]:
     start = 1
     while start <= _CLOUD_PAGE_MAX:
         window = _normalize_page_content(
-            col.get_page_content(doc_id, f"{start}-{start + _CLOUD_PAGE_WINDOW - 1}")
+            client.get_page_content(doc_id, f"{start}-{start + _CLOUD_PAGE_WINDOW - 1}")
         )
         pages.extend(window)
         if len(window) < _CLOUD_PAGE_WINDOW:
@@ -349,12 +324,11 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
         )
 
     client = PageIndexClient(api_key=pageindex_api_key)
-    col = client.collection()
-
-    doc = col.get_document(doc_id, include_text=True)
-    cloud_name: str = doc.get("doc_name") or doc_id
-    description: str = doc.get("doc_description", "")
-    structure: list = doc.get("structure", [])
+    doc = client.get_document(doc_id)
+    cloud_name: str = doc.get("name") or doc_id
+    description: str = doc.get("description", "")
+    tree_response = client.get_tree(doc_id, node_summary=True, include_text=True)
+    structure: list = tree_response.get("result", [])
 
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
     stem = _cloud_display_stem(cloud_name, doc_id)
@@ -366,7 +340,7 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
         "structure": structure,
     }
 
-    all_pages = _fetch_cloud_pages(col, doc_id)
+    all_pages = _fetch_document_pages(client, doc_id)
     if not all_pages:
         raise RuntimeError(f"No page content returned from PageIndex Cloud for doc_id={doc_id}")
 

@@ -14,7 +14,7 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
-from openkb.config import LlmCredentialBundle, resolve_model_settings
+from openkb.config import LlmCredentialBundle, resolve_model_settings, wiki_dir
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -229,7 +229,7 @@ def build_chat_agent(
     ``ShellTool.environment.skills`` so the model can ``cat`` the skill body
     and follow its instructions when the user's request matches.
     """
-    wiki_root = str(kb_dir / "wiki")
+    wiki_root = str(wiki_dir(kb_dir))
     kb_root = str(kb_dir)
     base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
@@ -382,7 +382,7 @@ async def run_query(
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
 
-    wiki_root = str(kb_dir / "wiki")
+    wiki_root = str(wiki_dir(kb_dir))
 
     agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 

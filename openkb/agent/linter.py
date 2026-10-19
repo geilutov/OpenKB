@@ -8,7 +8,7 @@ from agents import Agent, Runner, function_tool
 from agents.model_settings import ModelSettings
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.config import LlmCredentialBundle, resolve_model_settings
+from openkb.config import LlmCredentialBundle, resolve_model_settings, wiki_dir
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -119,7 +119,7 @@ async def run_knowledge_lint(
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
 
-    wiki_root = str(kb_dir / "wiki")
+    wiki_root = str(wiki_dir(kb_dir))
     agent = build_lint_agent(wiki_root, model, language=language, bundle=bundle)
 
     prompt = (

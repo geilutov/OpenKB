@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from openkb.cli import _LONG_DOC_TYPES
+from openkb.config import wiki_dir
 from openkb.state import HashRegistry
 
 
@@ -35,7 +36,7 @@ def _resolve_source_file(kb_dir: Path, meta: dict, doc_name: str) -> Path | None
     (older entries carry no ``source_path``). Returns ``None`` when nothing
     resolves to an existing file inside ``wiki/sources/``.
     """
-    sources_dir = (kb_dir / "wiki" / "sources").resolve()
+    sources_dir = (wiki_dir(kb_dir) / "sources").resolve()
     candidates: list[Path] = []
     stored = meta.get("source_path")
     if stored:

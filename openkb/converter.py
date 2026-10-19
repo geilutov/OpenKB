@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pymupdf
 
-from openkb.config import resolve_effective_config
+from openkb.config import resolve_effective_config, wiki_dir
 from openkb.images import convert_pdf_with_images, copy_relative_images, extract_base64_images
 from openkb.locks import atomic_write_text, kb_ingest_lock
 from openkb.state import HashRegistry
@@ -217,9 +217,18 @@ def convert_document(
         # ------------------------------------------------------------------
         # 4/5. Convert to Markdown
         # ------------------------------------------------------------------
-        sources_dir = artifact_root / "wiki" / "sources"
+        wiki_root = wiki_dir(kb_dir)
+        if staging_dir is None:
+            staged_wiki_root = wiki_root
+        else:
+            try:
+                configured_wiki = wiki_root.relative_to(kb_dir.resolve())
+            except ValueError:
+                configured_wiki = Path("__external_wiki__")
+            staged_wiki_root = artifact_root / configured_wiki
+        sources_dir = staged_wiki_root / "sources"
         sources_dir.mkdir(parents=True, exist_ok=True)
-        images_dir = artifact_root / "wiki" / "sources" / "images" / doc_name
+        images_dir = sources_dir / "images" / doc_name
         images_dir.mkdir(parents=True, exist_ok=True)
 
         if src.suffix.lower() == ".md":

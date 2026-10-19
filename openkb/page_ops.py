@@ -27,6 +27,7 @@ from openkb.lint import (
     strip_ghost_wikilinks,
 )
 from openkb.locks import atomic_write_text, kb_ingest_lock
+from openkb.config import wiki_dir
 
 # Compiled page types the user may EDIT (a recompile can still regenerate them):
 # concept/entity synthesis PLUS per-document summaries. index/log/reports are
@@ -113,7 +114,7 @@ def delete_wiki_page(kb_dir: Path, path: str, *, dry_run: bool = False) -> dict:
     is removed by deleting its source document, not on its own).
     """
     section, stem = validate_page_ref(path, allowed=DELETABLE_SECTIONS)
-    wiki = kb_dir / "wiki"
+    wiki = wiki_dir(kb_dir)
     page = wiki / section / f"{stem}.md"
     target = f"{section}/{stem}"
 
@@ -174,7 +175,7 @@ def page_link_context(kb_dir: Path, path: str) -> dict:
     blocker. Returns ``status`` ``not_found`` when the page is absent.
     """
     section, stem = validate_page_ref(path)
-    wiki = kb_dir / "wiki"
+    wiki = wiki_dir(kb_dir)
     page = wiki / section / f"{stem}.md"
     target = f"{section}/{stem}"
     if not page.is_file():
@@ -202,7 +203,7 @@ def edit_wiki_page(kb_dir: Path, path: str, content: str) -> dict:
     the KB ingest lock. Returns ``status`` ``not_found`` when the page is absent.
     """
     section, stem = validate_page_ref(path)
-    wiki = kb_dir / "wiki"
+    wiki = wiki_dir(kb_dir)
     page = wiki / section / f"{stem}.md"
     target = f"{section}/{stem}"
     if not page.is_file():

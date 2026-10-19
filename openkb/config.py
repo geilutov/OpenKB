@@ -597,6 +597,17 @@ def kb_root_dir() -> Path:
     return (GLOBAL_CONFIG_DIR / "kbs").resolve()
 
 
+def wiki_dir(kb_dir: Path) -> Path:
+    """Resolve the wiki directory from ``OPENKB_WIKI_DIR`` or the default.
+
+    Absolute environment paths are used as-is. Relative values remain
+    supported for compatibility and are resolved from the KB root.
+    """
+    configured = Path(os.environ.get("OPENKB_WIKI_DIR", "wiki").strip() or "wiki").expanduser()
+    root = kb_dir.expanduser().resolve()
+    return configured.resolve() if configured.is_absolute() else (root / configured).resolve()
+
+
 def _is_kb_dir(kb_dir: Path) -> bool:
     """Whether ``kb_dir`` is a KB directory (has both ``.openkb`` and ``wiki``).
 
@@ -606,7 +617,7 @@ def _is_kb_dir(kb_dir: Path) -> bool:
     imports this module). Used to recognize ``kb_root_dir()`` children so a
     root-level KB is never shadowed by a same-named off-root registry entry.
     """
-    return (kb_dir / ".openkb").is_dir() and (kb_dir / "wiki").is_dir()
+    return (kb_dir / ".openkb").is_dir() and wiki_dir(kb_dir).is_dir()
 
 
 def _root_child_names() -> set[str]:

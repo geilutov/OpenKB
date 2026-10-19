@@ -109,6 +109,7 @@ from openkb.config import (
     resolve_effective_config,
     resolve_init_kb_dir,
     validate_kb_name,
+    wiki_dir,
 )
 from openkb.log import append_log
 from openkb.watch_service import WatchRegistry
@@ -295,7 +296,7 @@ def create_app() -> FastAPI:
                 run_config=run_config,
                 bundle=bundle,
             )
-            append_log(kb_dir / "wiki", "query", request.question)
+            append_log(wiki_dir(kb_dir), "query", request.question)
             saved_path = (
                 _save_query_answer(kb_dir, request.question, answer) if request.save else None
             )
@@ -328,7 +329,7 @@ def create_app() -> FastAPI:
 
         try:
             answer = ""
-            append_log(kb_dir / "wiki", "query", request.message)
+            append_log(wiki_dir(kb_dir), "query", request.message)
             agent = build_chat_session_agent(kb_dir, session, bundle=bundle)
             async for event in iter_chat_turn_events(
                 agent, session, request.message, run_config=run_config

@@ -36,6 +36,7 @@ from openkb.config import (
     get_extra_headers,
     get_timeout,
     resolve_entity_types,
+    wiki_dir as resolve_wiki_dir,
 )
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.locks import atomic_write_text
@@ -67,11 +68,78 @@ Full text:
 {content}
 
 Write a summary page for this document in Markdown.
+Yes. With that original part included, I’d make the prompt **less ambiguous about “summary”** and especially about the fact that the source has already been carefully condensed. I’d also clarify that cultural information is valuable **when it has practical relevance to interactions, care, needs, expectations, etc.**, rather than treating “culture” as automatically important.
+
+I’d use this version:
+
+Write a summary page for this document in Markdown.
+
+### What “summary” means here
+
+The document has already been carefully compiled and contains relatively little redundant information. Therefore, **do not assume that a good summary must substantially shorten the document or remove a fixed proportion of its content**.
+
+Summarizing means primarily to **organize, condense, and clarify the existing content where useful, while removing genuine redundancy**. Do not remove information simply because it is specific, detailed, or makes the summary longer.
+
+The summary must **not result in the loss of important aspects, distinctions, examples, experiences, or concepts**. Do not generalize specific information into vague statements if doing so would lose meaning.
+
+**Preserve information rather than brevity when the two are in conflict.** When you are uncertain whether a detail is important, keep it.
+
+### What to prioritize
+
+Give particular attention to **personal interaction and culturally shaped habits, expectations, and practices that can become relevant in nursing and caring situations**, whether care takes place:
+
+* at home or in another private setting;
+* in a nursing or care facility;
+* in interactions between the person receiving care, relatives, caregivers, nurses, or other involved people.
+
+Information about the situation and perspective of the people involved is especially valuable. This includes, for example:
+
+* feelings and emotional experiences;
+* needs, wishes, demands, and expectations;
+* fears, concerns, hopes, and insecurities;
+* personal resources, limitations, and coping strategies;
+* values, beliefs, and priorities;
+* ways of communicating and interacting;
+* family and relationship dynamics;
+* personal boundaries, dignity, autonomy, and sense of control;
+* culturally shaped habits, practices, expectations, and understandings;
+* differences that may affect trust, communication, cooperation, or the experience of care.
+
+Treat such information as valuable **regardless of the person's age, sex, gender, or cultural background**.
+
+### Cultural information
+
+Cultural information is particularly relevant when it has a connection to **people's experiences, interactions, needs, expectations, behavior, communication, or the way nursing and caring situations are experienced or handled**.
+
+Cultural information that has no meaningful connection to the situation of the people involved or to nursing and caring can be considered lower priority and may be omitted if necessary.
+
+However, do not discard cultural information merely because its relevance is not immediately obvious. If it helps explain a person's perspective, behavior, expectations, needs, or interaction with others, preserve it.
+
+### What may be omitted or condensed
+
+You may remove or condense:
+
+* genuine repetition;
+* redundant explanations of the same point;
+* unnecessary wording;
+* generic statements that contribute little to understanding the topic;
+* vague or overly general information when more specific and meaningful information is available;
+* structural or transitional text that does not contribute substantive information.
+
+Do **not** remove substantive information merely to achieve a shorter text.
+
+### Fidelity over compression
+
+The goal is an **information-preserving summary**, not aggressive shortening.
+
+Do not invent information, introduce interpretations that are not supported by the document, or change the relative meaning of important points.
+
+A summary that is somewhat long but preserves the important content is **better than a short summary that loses meaningful information**.
 
 Return a JSON object with two keys:
 - "description": A single sentence (under 100 chars) describing the document's main contribution
 - "content": The full summary in Markdown. Include key concepts, findings, ideas, \
-and [[wikilinks]] to concepts that could become cross-document concept pages
+and [[wikilinks]] to concepts that could become cross-document concept pages as well as concepts that stand on its own by their important nature within cultural aspects of the country.
 
 Return ONLY valid JSON, no fences.
 """
@@ -121,6 +189,46 @@ Rules:
   or (b) likely to recur across sources. Do NOT page proper nouns mentioned
   only in passing. Roughly 5-15 entities per document is typical; fewer for
   sparse documents.
+- Prefer "update" over "create" for any concept or entity already listed above.
+- Do NOT create a concept/entity that overlaps an existing one — use "update".
+- Do NOT create concepts that are just the document topic itself.
+- "related" is lightweight cross-linking only, no content rewrite.
+
+Return ONLY valid JSON, no fences, no explanation.
+"""
+
+_CONCEPTS_PLAN_USER_LONG = """\
+Based on the summary above, decide how to update the wiki's CONCEPT pages and
+ENTITY pages.
+
+A CONCEPT is an abstract, recurring idea/pattern/mechanism (e.g. "agentic
+systems"). An ENTITY is a specific named thing — a person, organization,
+place, product, named work, or event (e.g. "Anthropic"). Each name goes in
+exactly ONE group. A topic may have both (entity "NVIDIA" and concept
+"ai-infrastructure-demand"); they cross-link, they do not merge.
+
+Existing concept pages:
+{concept_briefs}
+
+Existing entity pages (with source counts = how many docs already cite them):
+{entity_briefs}
+
+Return a JSON object with two top-level keys, "concepts" and "entities".
+
+"concepts" is an object with:
+1. "create" — new concepts. Array of {{"name": "concept-slug", "title": "Title"}}
+2. "update" — existing concepts with significant new info. Same shape.
+3. "related" — existing concept slugs to cross-link only. Array of strings.
+
+"entities" is an object with the same three keys, but create/update objects
+add a "type" field, one of: __ENTITY_TYPES__. Example:
+   {{"name": "anthropic", "title": "Anthropic", "type": "organization"}}
+
+Rules:
+- For the  document, create 7-15 foundational concepts at most.
+- Create an ENTITY page only when the entity is (a) central to this document
+  or (b) likely to recur across sources. Do NOT page proper nouns mentioned
+  only in passing. Roughly 7-15 entities per document is typical.
 - Prefer "update" over "create" for any concept or entity already listed above.
 - Do NOT create a concept/entity that overlaps an existing one — use "update".
 - Do NOT create concepts that are just the document topic itself.
@@ -247,12 +355,84 @@ Return ONLY the rewritten Markdown content (no JSON, no fences, no frontmatter).
 _LONG_DOC_SUMMARY_USER = """\
 This is a PageIndex summary for long document "{doc_name}" (doc_id: {doc_id}):
 
+Full text:
 {content}
 
-Based on this structured summary, write a concise overview that captures \
-the key themes and findings. This will be used to generate concept pages.
+Write a summary page for this document in Markdown.
+Yes. With that original part included, I’d make the prompt **less ambiguous about “summary”** and especially about the fact that the source has already been carefully condensed. I’d also clarify that cultural information is valuable **when it has practical relevance to interactions, care, needs, expectations, etc.**, rather than treating “culture” as automatically important.
 
-Return ONLY the Markdown content (no frontmatter, no code fences).
+I’d use this version:
+
+Write a summary page for this document in Markdown.
+
+### What “summary” means here
+
+The document has already been carefully compiled and contains relatively little redundant information. Therefore, **do not assume that a good summary must substantially shorten the document or remove a fixed proportion of its content**.
+
+Summarizing means primarily to **organize, condense, and clarify the existing content where useful, while removing genuine redundancy**. Do not remove information simply because it is specific, detailed, or makes the summary longer.
+
+The summary must **not result in the loss of important aspects, distinctions, examples, experiences, or concepts**. Do not generalize specific information into vague statements if doing so would lose meaning.
+
+**Preserve information rather than brevity when the two are in conflict.** When you are uncertain whether a detail is important, keep it.
+
+### What to prioritize
+
+Give particular attention to **personal interaction and culturally shaped habits, expectations, and practices that can become relevant in nursing and caring situations**, whether care takes place:
+
+* at home or in another private setting;
+* in a nursing or care facility;
+* in interactions between the person receiving care, relatives, caregivers, nurses, or other involved people.
+
+Information about the situation and perspective of the people involved is especially valuable. This includes, for example:
+
+* feelings and emotional experiences;
+* needs, wishes, demands, and expectations;
+* fears, concerns, hopes, and insecurities;
+* personal resources, limitations, and coping strategies;
+* values, beliefs, and priorities;
+* ways of communicating and interacting;
+* family and relationship dynamics;
+* personal boundaries, dignity, autonomy, and sense of control;
+* culturally shaped habits, practices, expectations, and understandings;
+* differences that may affect trust, communication, cooperation, or the experience of care.
+
+Treat such information as valuable **regardless of the person's age, sex, gender, or cultural background**.
+
+### Cultural information
+
+Cultural information is particularly relevant when it has a connection to **people's experiences, interactions, needs, expectations, behavior, communication, or the way nursing and caring situations are experienced or handled**.
+
+Cultural information that has no meaningful connection to the situation of the people involved or to nursing and caring can be considered lower priority and may be omitted if necessary.
+
+However, do not discard cultural information merely because its relevance is not immediately obvious. If it helps explain a person's perspective, behavior, expectations, needs, or interaction with others, preserve it.
+
+### What may be omitted or condensed
+
+You may remove or condense:
+
+* genuine repetition;
+* redundant explanations of the same point;
+* unnecessary wording;
+* generic statements that contribute little to understanding the topic;
+* vague or overly general information when more specific and meaningful information is available;
+* structural or transitional text that does not contribute substantive information.
+
+Do **not** remove substantive information merely to achieve a shorter text.
+
+### Fidelity over compression
+
+The goal is an **information-preserving summary**, not aggressive shortening.
+
+Do not invent information, introduce interpretations that are not supported by the document, or change the relative meaning of important points.
+
+A summary that is somewhat long but preserves the important content is **better than a short summary that loses meaningful information**.
+
+Return a JSON object with two keys:
+- "description": A single sentence (under 100 chars) describing the document's main contribution
+- "content": The full summary in Markdown. Include key concepts, findings, ideas, \
+and [[wikilinks]] to concepts that could become cross-document concept pages as well as concepts that stand on its own by their important nature within cultural aspects of the country.
+
+Return ONLY valid JSON, no fences.
 """
 
 
@@ -413,8 +593,7 @@ def _llm_call(
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
     timeout = bundle.timeout if bundle is not None else get_timeout()
-    if timeout is not None:
-        kwargs.setdefault("timeout", timeout)
+    kwargs.setdefault("timeout", 36000)
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
@@ -432,7 +611,7 @@ def _llm_call(
 
     try:
         response = litellm.completion(model=model, messages=messages, reasoning_effort="none",
-                                  max_tokens=72000, chat_template_kwargs= {
+                                  chat_template_kwargs= {
                                                 "enable_thinking": False,
                                                 "thinking_budget_tokens": 0,  
                                             }, **kwargs)
@@ -468,9 +647,6 @@ async def _llm_call_async(
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
-    timeout = bundle.timeout if bundle is not None else get_timeout()
-    if timeout is not None:
-        kwargs.setdefault("timeout", timeout)
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
@@ -513,7 +689,8 @@ async def _llm_call_page_async(
     every page-generating call so the guarantee can't be forgotten at a new
     call site.
     """
-    kwargs.setdefault("max_tokens", 95000)  # ~75k chars, enough for a long page
+    #kwargs.setdefault("max_tokens", 95000)  # ~75k chars, enough for a long page
+    kwargs.setdefault("timeout", 36000)  # 10h, enough for a long page
     return await _llm_call_async(
         model, messages, step_name, raise_on_truncation=True, bundle=bundle, **kwargs
     )
@@ -1648,10 +1825,17 @@ async def _compile_concepts(
     concept_briefs = _read_concept_briefs(wiki_dir)
     entity_briefs = _read_entity_briefs(wiki_dir)
 
-    # Second cache breakpoint: end of the assistant summary message. Covers
-    # (system + doc + summary) for the plan call and every concept call.
+    # ``summary`` is the full source context for PageIndex. The long-doc
+    # caller passes one chapter at a time so a plan cannot see sibling chapters.
     summary_msg = {"role": "assistant", "content": _cached_text(summary)}
 
+    content=_CONCEPTS_PLAN_USER.format(
+                    concept_briefs=concept_briefs,
+                    entity_briefs=entity_briefs,
+                ).replace("__ENTITY_TYPES__", types_str) if doc_type != "pageindex" else _CONCEPTS_PLAN_USER_LONG.format(
+                    concept_briefs=concept_briefs,
+                    entity_briefs=entity_briefs,
+                ).replace("__ENTITY_TYPES__", types_str)
     plan_raw = _llm_call(
         model,
         [
@@ -1660,10 +1844,7 @@ async def _compile_concepts(
             summary_msg,
             {
                 "role": "user",
-                "content": _CONCEPTS_PLAN_USER.format(
-                    concept_briefs=concept_briefs,
-                    entity_briefs=entity_briefs,
-                ).replace("__ENTITY_TYPES__", types_str),
+                "content": content,
             },
         ],
         "concepts-plan",
@@ -2242,7 +2423,7 @@ async def compile_short_doc(
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     schema_md = get_agents_md(wiki_dir)
     content = source_path.read_text(encoding="utf-8")
 
@@ -2309,6 +2490,48 @@ async def compile_short_doc(
         await _close_async_llm_clients()
 
 
+_MARKDOWN_CHAPTER_HEADING_RE = re.compile(r"(?m)^##?[ \t]+(.+?)\s*$")
+
+
+def _split_markdown_chapters(markdown: str) -> list[tuple[str, str]]:
+    """Split a rendered PageIndex summary at its chapter-level headings."""
+    parts = frontmatter.split(markdown)
+    body = parts[1] if parts is not None else markdown
+    matches = list(_MARKDOWN_CHAPTER_HEADING_RE.finditer(body))
+    if not matches:
+        content = body.strip()
+        return [("Gesamtdokument", content)] if content else []
+
+    chapters: list[tuple[str, str]] = []
+    chapter_positions: dict[str, int] = {}
+    preamble = body[: matches[0].start()].strip()
+    if preamble:
+        chapters.append(("Einleitung", preamble))
+
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        title = match.group(1).strip()
+        chapter_body = body[match.end() : end].strip()
+        normalized_title = re.sub(
+            r"\s*\(pages?\s+[^)]*\)\s*$", "", title, flags=re.IGNORECASE
+        )
+        normalized_title = " ".join(normalized_title.split()).casefold()
+        content = f"{title}\n\n{chapter_body}".strip()
+        if content:
+            if normalized_title in chapter_positions:
+                position = chapter_positions[normalized_title]
+                previous_title, previous_content = chapters[position]
+                previous_body = previous_content.split("\n\n", 1)[1]
+                chapters[position] = (
+                    previous_title,
+                    f"{previous_title}\n\n{previous_body}\n\n{chapter_body}".strip(),
+                )
+            else:
+                chapter_positions[normalized_title] = len(chapters)
+                chapters.append((title, content))
+    return chapters
+
+
 async def compile_long_doc(
     doc_name: str,
     summary_path: Path,
@@ -2330,7 +2553,7 @@ async def compile_long_doc(
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
 
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     schema_md = get_agents_md(wiki_dir)
     summary_content = summary_path.read_text(encoding="utf-8")
 
@@ -2348,8 +2571,15 @@ async def compile_long_doc(
             summary_content = updated
             atomic_write_text(summary_path, summary_content)
 
-    # Base context A. cache_control marker on the doc message creates a
-    # cache breakpoint covering (system + doc) for every concept call.
+    chapters = _split_markdown_chapters(summary_content)
+    logger.info("Compiling PageIndex chapters for %s:", doc_name)
+    for chapter_title, _ in chapters:
+        logger.info("  - %s", chapter_title)
+    if not chapters:
+        logger.warning("PageIndex summary %s has no chapter content", summary_path)
+        return
+
+    # Build a separate context and concept/entity plan for each chapter.
     system_msg = {
         "role": "system",
         "content": _SYSTEM_TEMPLATE.format(
@@ -2357,36 +2587,35 @@ async def compile_long_doc(
             language=language,
         ),
     }
-    doc_msg = {
-        "role": "user",
-        "content": _cached_text(
-            _LONG_DOC_SUMMARY_USER.format(
-                doc_name=doc_name,
-                doc_id=doc_id,
-                content=summary_content,
-            )
-        ),
-    }
-
-    # --- Step 1: Generate overview ---
-    overview = _llm_call(model, [system_msg, doc_msg], "overview", bundle=bundle)
-
-    # --- Steps 2-4: Concept plan → generate/update → index ---
     try:
-        await _compile_concepts(
-            wiki_dir,
-            kb_dir,
-            model,
-            system_msg,
-            doc_msg,
-            overview,
-            doc_name,
-            max_concurrency,
-            doc_brief=doc_description,
-            doc_type="pageindex",
-            entity_types=entity_types,
-            bundle=bundle,
-        )
+        for chapter_title, chapter_content in chapters:
+            logger.warning(
+                "Compiling PageIndex chapter %r for %s", chapter_title, doc_name
+            )
+            doc_msg = {
+                "role": "user",
+                "content": _cached_text(
+                    _LONG_DOC_SUMMARY_USER.format(
+                        doc_name=f"{doc_name} — {chapter_title}",
+                        doc_id=doc_id,
+                        content=chapter_content,
+                    )
+                ),
+            }
+            await _compile_concepts(
+                wiki_dir,
+                kb_dir,
+                model,
+                system_msg,
+                doc_msg,
+                chapter_content,
+                doc_name,
+                max_concurrency,
+                doc_brief=doc_description,
+                doc_type="pageindex",
+                entity_types=entity_types,
+                bundle=bundle,
+            )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this
         # loop down, to avoid the CLOSE-WAIT/FD leak across a long ingest.

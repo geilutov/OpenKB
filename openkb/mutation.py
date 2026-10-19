@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -343,7 +344,11 @@ def snapshot_paths(
             if not target.exists():
                 snapshot.entries[target] = None
                 continue
-            rel = target.relative_to(kb_dir)
+            try:
+                rel = target.relative_to(kb_dir)
+            except ValueError:
+                external_id = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
+                rel = Path("__external__") / external_id / target.name
             backup = backup_dir / rel
             backup.parent.mkdir(parents=True, exist_ok=True)
             if target.is_dir():
@@ -448,11 +453,21 @@ def publish_staged_tree(staging_dir: Path | None, kb_dir: Path) -> None:
     """Move staged raw/source artifacts into their final KB locations."""
     if staging_dir is None or not staging_dir.exists():
         return
-    for rel in ("raw", "wiki/sources"):
-        src_root = staging_dir / rel
+    from openkb.config import wiki_dir
+
+    wiki_root = wiki_dir(kb_dir)
+    try:
+        staged_wiki_root = staging_dir / wiki_root.relative_to(kb_dir.resolve())
+    except ValueError:
+        staged_wiki_root = staging_dir / "__external_wiki__"
+
+    for src_root, dest_root in (
+        (staging_dir / "raw", kb_dir / "raw"),
+        (staged_wiki_root / "sources", wiki_root / "sources"),
+    ):
         if not src_root.exists():
             continue
         for src in src_root.rglob("*"):
             if not src.is_file():
                 continue
-            _publish_staged_file(src, kb_dir / rel / src.relative_to(src_root))
+            _publish_staged_file(src, dest_root / src.relative_to(src_root))

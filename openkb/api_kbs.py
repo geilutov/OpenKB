@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from openkb.api_helpers import _is_kb_dir
-from openkb.config import kb_root_dir, registered_kbs
+from openkb.config import kb_root_dir, registered_kbs, wiki_dir
 
 
 def _kb_list_item(kb_dir: Path, name: str) -> dict[str, Any]:
@@ -32,7 +32,7 @@ def _kb_list_item(kb_dir: Path, name: str) -> dict[str, Any]:
         except (ValueError, OSError):
             doc_count = 0
     last_compile = None
-    summaries_dir = kb_dir / "wiki" / "summaries"
+    summaries_dir = wiki_dir(kb_dir) / "summaries"
     if summaries_dir.is_dir():
         # Guard each stat() (like document_count above): a single unstattable
         # entry — e.g. a dangling symlink whose target was removed — must not

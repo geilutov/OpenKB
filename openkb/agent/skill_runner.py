@@ -35,7 +35,7 @@ from agents import Runner, function_tool
 from openkb.agent.query import build_query_agent, build_run_config_from_bundle
 from openkb.agent.skills import _parse_frontmatter, scan_local_skills
 from openkb.agent.tools import read_kb_file, write_kb_file
-from openkb.config import LlmCredentialBundle
+from openkb.config import LlmCredentialBundle, wiki_dir
 
 MAX_TURNS = 80
 MAX_TURNS_WITH_CRITIQUE = 120
@@ -142,7 +142,7 @@ async def run_skill(
             f"write_file call): {rel}\n\n{intent}"
         )
 
-    wiki_root = str(kb_dir / "wiki")
+    wiki_root = str(wiki_dir(kb_dir))
     kb_root = str(kb_dir)
     base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 

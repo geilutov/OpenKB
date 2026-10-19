@@ -29,7 +29,7 @@ from openkb.agent.query import (
     build_chat_agent,
     iter_agent_response_events,
 )
-from openkb.config import LlmCredentialBundle
+from openkb.config import LlmCredentialBundle, wiki_dir
 from openkb.log import append_log
 
 _STYLE_DICT: dict[str, str] = {
@@ -445,7 +445,8 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
         strip_ghost_wikilinks,
     )
 
-    explore_dir = kb_dir / "wiki" / "explorations"
+    wiki_root = wiki_dir(kb_dir)
+    explore_dir = wiki_root / "explorations"
     explore_dir.mkdir(parents=True, exist_ok=True)
 
     base = name or session.title or (session.user_turns[0] if session.user_turns else session.id)
@@ -459,7 +460,7 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
     # represent intentional user input, not LLM hallucination.
     # Build the normalized index once and reuse for every turn — the
     # whitelist is the same across the whole session.
-    known = list_existing_wiki_targets(kb_dir / "wiki")
+    known = list_existing_wiki_targets(wiki_root)
     norm_index = build_norm_index(known)
 
     lines: list[str] = [
@@ -1061,7 +1062,7 @@ async def run_chat(
         from openkb.locks import kb_ingest_lock
 
         with kb_ingest_lock(kb_dir / ".openkb"):
-            append_log(kb_dir / "wiki", "query", user_input)
+            append_log(wiki_dir(kb_dir), "query", user_input)
         try:
             await _run_turn(agent, session, user_input, style, use_color=use_color, raw=raw)
         except KeyboardInterrupt:

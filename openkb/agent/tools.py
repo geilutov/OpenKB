@@ -12,6 +12,7 @@ import json as _json
 from pathlib import Path, PurePosixPath
 
 from openkb.locks import atomic_write_text
+from openkb.config import wiki_dir
 
 
 def list_wiki_files(directory: str, wiki_root: str) -> str:
@@ -204,8 +205,11 @@ def read_kb_file(path: str, kb_root: str) -> str:
     rel = full_path.relative_to(root)
     if not rel.parts:
         return "Access denied: KB root itself is not readable."
-    if rel.parts[0] not in ("wiki", "output", "skills"):
-        return "Access denied: path must be under wiki/, output/, or skills/."
+    wiki_parts = wiki_dir(root).relative_to(root).parts
+    wiki_prefix = "/".join(wiki_parts)
+    in_wiki = rel.parts[: len(wiki_parts)] == wiki_parts
+    if not in_wiki and rel.parts[0] not in ("output", "skills"):
+        return f"Access denied: path must be under {wiki_prefix}/, output/, or skills/."
     if not full_path.is_file():
         return f"File not found: {path}"
     return full_path.read_text(encoding="utf-8", errors="replace")
@@ -231,7 +235,7 @@ def write_kb_file(path: str, content: str, kb_root: str) -> str:
         ``"Written: {path}"`` on success, or an access-denied message.
     """
     if not path:
-        return "Access denied: path must be a file under wiki/explorations/ or output/."
+        return "Access denied: path must be a file under the wiki explorations directory or output/."
     root = Path(kb_root).resolve()
     full_path = (root / path).resolve()
     if not full_path.is_relative_to(root):
@@ -241,11 +245,15 @@ def write_kb_file(path: str, content: str, kb_root: str) -> str:
     # Require a file path with at least one component beyond the allow-list
     # prefix, so a bare directory name (e.g. "output") does not slip through
     # and crash on write_text with IsADirectoryError.
-    allowed = (len(parts) >= 3 and parts[0] == "wiki" and parts[1] == "explorations") or (
-        len(parts) >= 2 and parts[0] == "output"
-    )
+    wiki_parts = wiki_dir(root).relative_to(root).parts
+    wiki_prefix = "/".join(wiki_parts)
+    allowed = (
+        len(parts) >= len(wiki_parts) + 2
+        and parts[: len(wiki_parts)] == wiki_parts
+        and parts[len(wiki_parts)] == "explorations"
+    ) or (len(parts) >= 2 and parts[0] == "output")
     if not allowed:
-        return "Access denied: path must be a file under wiki/explorations/ or output/."
+        return f"Access denied: path must be a file under {wiki_prefix}/explorations/ or output/."
     full_path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic temp-file + os.replace rename (openkb.locks): a crash/interleave
     # mid-write can never leave a truncated page for a concurrent lint/recompile

@@ -5,6 +5,7 @@ from __future__ import annotations
 # Silence import-time warnings (e.g. pydub's missing-ffmpeg warning emitted
 # when markitdown pulls it in). markitdown later clobbers the filters during
 # its own import, so we re-apply after all imports below.
+import traceback
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -61,6 +62,7 @@ from openkb.config import (
     set_parallel_tool_calls,
     set_timeout,
     resolve_per_request_overrides,
+    wiki_dir as resolve_wiki_dir,
 )
 from openkb.add_coordinator import _cleanup_staging_dirs
 from openkb.converter import (
@@ -353,7 +355,7 @@ def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
     if err:
         return err
 
-    wiki = kb_dir / "wiki"
+    wiki = resolve_wiki_dir(kb_dir)
     if not wiki.is_dir():
         return "No wiki found in this KB. Run `openkb add <source>` to ingest documents first."
 
@@ -391,7 +393,7 @@ def _final_artifact_paths(result, kb_dir: Path) -> tuple[Path | None, Path | Non
     if result.raw_path is not None:
         final_raw = kb_dir / "raw" / result.raw_path.name
     if result.source_path is not None:
-        final_source = kb_dir / "wiki" / "sources" / result.source_path.name
+        final_source = resolve_wiki_dir(kb_dir) / "sources" / result.source_path.name
     return final_raw, final_source
 
 
@@ -413,13 +415,13 @@ def _snapshot_add_paths(
         kb_dir / ".openkb" / "pageindex.db-wal",
         kb_dir / ".openkb" / "pageindex.db-shm",
         kb_dir / ".openkb" / "pageindex.db-journal",
-        kb_dir / "wiki" / "summaries" / f"{doc_name}.md",
-        kb_dir / "wiki" / "sources" / f"{doc_name}.json",
-        kb_dir / "wiki" / "sources" / "images" / doc_name,
-        kb_dir / "wiki" / "concepts",
-        kb_dir / "wiki" / "entities",
-        kb_dir / "wiki" / "index.md",
-        kb_dir / "wiki" / "log.md",
+        resolve_wiki_dir(kb_dir) / "summaries" / f"{doc_name}.md",
+        resolve_wiki_dir(kb_dir) / "sources" / f"{doc_name}.json",
+        resolve_wiki_dir(kb_dir) / "sources" / "images" / doc_name,
+        resolve_wiki_dir(kb_dir) / "concepts",
+        resolve_wiki_dir(kb_dir) / "entities",
+        resolve_wiki_dir(kb_dir) / "index.md",
+        resolve_wiki_dir(kb_dir) / "log.md",
     ]
     if final_raw is not None:
         paths.append(final_raw)
@@ -529,6 +531,7 @@ def _add_single_file_locked(
 
                 index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
             except Exception as exc:
+                traceback.print_exc()
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
                 raise
@@ -549,7 +552,7 @@ def _add_single_file_locked(
                     ]
                 )
 
-            summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+            summary_path = resolve_wiki_dir(kb_dir) / "summaries" / f"{doc_name}.md"
             _run_compile_with_retry(
                 lambda: compile_long_doc(
                     doc_name,
@@ -606,7 +609,7 @@ def _add_single_file_locked(
             registry.add(result.file_hash, meta)
 
     def append_ingest_log() -> None:
-        append_log(kb_dir / "wiki", "ingest", file_path.name)
+        append_log(resolve_wiki_dir(kb_dir), "ingest", file_path.name)
 
     from openkb.add_coordinator import AddMutationPlan, run_add_mutation
 
@@ -621,8 +624,8 @@ def _add_single_file_locked(
         body=commit_body,
         post_commit_hooks=[append_ingest_log],
         hardlink_dirs={
-            kb_dir / "wiki" / "concepts",
-            kb_dir / "wiki" / "entities",
+            resolve_wiki_dir(kb_dir) / "concepts",
+            resolve_wiki_dir(kb_dir) / "entities",
         },
         staging_dirs=[staging_dir],
     )
@@ -687,7 +690,7 @@ def _cleanup_failed_cloud_import(kb_dir: Path, doc_name: str) -> None:
         remove_doc_from_index,
     )
 
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     (wiki_dir / "summaries" / f"{doc_name}.md").unlink(missing_ok=True)
     (wiki_dir / "sources" / f"{doc_name}.json").unlink(missing_ok=True)
     images_dir = wiki_dir / "sources" / "images" / doc_name
@@ -781,7 +784,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
                     "origin": "cloud",
                     "path": path_key,
                     "source_path": _registry_path(
-                        kb_dir / "wiki" / "sources" / f"{doc_name}.json", kb_dir
+                        resolve_wiki_dir(kb_dir) / "sources" / f"{doc_name}.json", kb_dir
                     ),
                     "doc_id": doc_id,
                 }
@@ -789,7 +792,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
                 registry.add(synthetic_hash, meta)
 
             def append_cloud_log() -> None:
-                append_log(kb_dir / "wiki", "ingest", doc_name)
+                append_log(resolve_wiki_dir(kb_dir), "ingest", doc_name)
 
             plan = AddMutationPlan(
                 operation="cloud_import",
@@ -800,8 +803,8 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
                 # Cloud import reads from PageIndex Cloud and writes no local blob,
                 # so .openkb/files is never touched — nothing to snapshot there.
                 hardlink_dirs={
-                    kb_dir / "wiki" / "concepts",
-                    kb_dir / "wiki" / "entities",
+                    resolve_wiki_dir(kb_dir) / "concepts",
+                    resolve_wiki_dir(kb_dir) / "entities",
                 },
             )
             if not run_add_mutation(kb_dir, plan):
@@ -1026,15 +1029,16 @@ def init(model, language):
         language = DEFAULT_CONFIG["language"]
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
-    Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
-    Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
-    Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
-    Path("wiki/entities").mkdir(parents=True, exist_ok=True)
+    wiki_root = resolve_wiki_dir(Path.cwd())
+    (wiki_root / "sources" / "images").mkdir(parents=True, exist_ok=True)
+    (wiki_root / "summaries").mkdir(parents=True, exist_ok=True)
+    (wiki_root / "concepts").mkdir(parents=True, exist_ok=True)
+    (wiki_root / "entities").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
-    atomic_write_text(Path("wiki/AGENTS.md"), AGENTS_MD)
-    atomic_write_text(Path("wiki/index.md"), INDEX_SEED)
-    atomic_write_text(Path("wiki/log.md"), "# Operations Log\n\n")
+    atomic_write_text(wiki_root / "AGENTS.md", AGENTS_MD)
+    atomic_write_text(wiki_root / "index.md", INDEX_SEED)
+    atomic_write_text(wiki_root / "log.md", "# Operations Log\n\n")
 
     # Create .openkb/ state directory
     openkb_dir.mkdir()
@@ -1183,14 +1187,15 @@ def save_exploration(kb_dir: Path, question: str, answer: str) -> Path | None:
     # concurrent REST saves can both select the same unused suffix and one
     # answer silently overwrites the other.
     with kb_ingest_lock(kb_dir / ".openkb"):
-        explore_dir = kb_dir / "wiki" / "explorations"
+        wiki_root = resolve_wiki_dir(kb_dir)
+        explore_dir = wiki_root / "explorations"
         explore_dir.mkdir(parents=True, exist_ok=True)
 
         # Strip ghost wikilinks the agent may have emitted to non-existent
         # concept/summary pages -- the schema_md in the agent's instructions
         # encourages [[wikilinks]] but the agent's view of "which pages
         # exist" can drift from disk reality.
-        known = list_existing_wiki_targets(kb_dir / "wiki")
+        known = list_existing_wiki_targets(wiki_root)
         cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
 
         slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
@@ -1249,21 +1254,22 @@ def query(ctx, question, save, raw):
         click.echo(f"[ERROR] Query failed: {exc}")
         return
 
-    append_log(kb_dir / "wiki", "query", question)
+    append_log(resolve_wiki_dir(kb_dir), "query", question)
 
     if save and answer:
         import re
         from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 
         slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
-        explore_dir = kb_dir / "wiki" / "explorations"
+        wiki_root = resolve_wiki_dir(kb_dir)
+        explore_dir = wiki_root / "explorations"
         explore_dir.mkdir(parents=True, exist_ok=True)
         explore_path = explore_dir / f"{slug}.md"
         # Strip ghost wikilinks the agent may have emitted to non-existent
         # concept/summary pages — the schema_md in the agent's instructions
         # encourages [[wikilinks]] but the agent's view of "which pages
         # exist" can drift from disk reality.
-        known = list_existing_wiki_targets(kb_dir / "wiki")
+        known = list_existing_wiki_targets(wiki_root)
         cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
         explore_path.write_text(
             f'---\nquery: "{question}"\n---\n\n{cleaned_answer}\n',
@@ -1415,7 +1421,7 @@ def _build_remove_plan(
     name = meta.get("name", "?")
     doc_name = meta.get("doc_name") or Path(name).stem
     doc_type = meta.get("type", "")
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     openkb_dir = kb_dir / ".openkb"
 
     actions: list[RemoveAction] = []
@@ -1445,24 +1451,24 @@ def _build_remove_plan(
     concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty]
     concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty]
     for slug in concept_deletes:
-        actions.append(RemoveAction("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
+        actions.append(RemoveAction("DELETE", f"{wiki_dir.name}/concepts/{slug}.md  (only source: this doc)"))
     for slug in concept_edits:
         actions.append(
-            RemoveAction("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)")
+            RemoveAction("MODIFY", f"{wiki_dir.name}/concepts/{slug}.md  (drop this doc from sources)")
         )
 
     affected_entities = scan_affected_pages(wiki_dir / "entities", source_file_marker)
     entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty]
     entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty]
     for slug in entity_deletes:
-        actions.append(RemoveAction("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
+        actions.append(RemoveAction("DELETE", f"{wiki_dir.name}/entities/{slug}.md  (only source: this doc)"))
     for slug in entity_edits:
         actions.append(
-            RemoveAction("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)")
+            RemoveAction("MODIFY", f"{wiki_dir.name}/entities/{slug}.md  (drop this doc from sources)")
         )
 
     if (wiki_dir / "index.md").exists():
-        actions.append(RemoveAction("MODIFY", "wiki/index.md  (remove Documents entry)"))
+        actions.append(RemoveAction("MODIFY", f"{wiki_dir.name}/index.md  (remove Documents entry)"))
 
     actions.append(RemoveAction("REGISTRY", f"remove hash entry  ({file_hash[:12]}…)"))
 
@@ -1537,7 +1543,7 @@ def _execute_remove_plan(
     )
     from openkb.lint import fix_broken_links
 
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     openkb_dir = kb_dir / ".openkb"
     doc_name = plan.doc_name
     name = plan.name
@@ -1912,7 +1918,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
         return
 
     openkb_dir = kb_dir / ".openkb"
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     registry = HashRegistry(openkb_dir / "hashes.json")
 
     # Resolve the set of docs to recompile.
@@ -2081,7 +2087,7 @@ async def iter_recompile(
     from openkb.state import HashRegistry
 
     openkb_dir = kb_dir / ".openkb"
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     registry = HashRegistry(openkb_dir / "hashes.json")
 
     def _classify(meta: dict) -> str:
@@ -2473,7 +2479,8 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
     # Write combined report
     with kb_ingest_lock(openkb_dir):
-        reports_dir = kb_dir / "wiki" / "reports"
+        wiki_root = resolve_wiki_dir(kb_dir)
+        reports_dir = wiki_root / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
         import datetime
 
@@ -2481,7 +2488,7 @@ async def run_lint(kb_dir: Path) -> Path | None:
         report_path = reports_dir / f"lint_{timestamp}.md"
         report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
         report_path.write_text(report_content, encoding="utf-8")
-        append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
+        append_log(wiki_root, "lint", f"report → {report_path.name}")
     click.echo(f"\nReport written to {report_path}")
     return report_path
 
@@ -2505,7 +2512,7 @@ def lint(ctx, fix):
         from openkb.lint import fix_broken_links
 
         with kb_ingest_lock(kb_dir / ".openkb"):
-            files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
+            files_changed, ghosts = fix_broken_links(resolve_wiki_dir(kb_dir))
         if files_changed:
             click.echo(f"Fixed {ghosts} wikilink(s) across {files_changed} file(s).")
         else:
@@ -2530,7 +2537,7 @@ def visualize(ctx, open_browser):
         return
     from openkb import visualize as viz
 
-    graph = viz.build_graph(kb_dir / "wiki")
+    graph = viz.build_graph(resolve_wiki_dir(kb_dir))
     if not graph["nodes"]:
         click.echo("No wiki pages to visualize yet. Run `openkb add` first.")
         return
@@ -2582,7 +2589,8 @@ def print_list(kb_dir: Path) -> None:
         click.echo(f"  {name:<40} {display:<12} {pages_str:<8}")
 
     # Display summaries
-    summaries_dir = kb_dir / "wiki" / "summaries"
+    wiki_root = resolve_wiki_dir(kb_dir)
+    summaries_dir = wiki_root / "summaries"
     if summaries_dir.exists():
         summaries = sorted(p.stem for p in summaries_dir.glob("*.md"))
         if summaries:
@@ -2591,7 +2599,7 @@ def print_list(kb_dir: Path) -> None:
                 click.echo(f"  - {s}")
 
     # Display concepts
-    concepts_dir = kb_dir / "wiki" / "concepts"
+    concepts_dir = wiki_root / "concepts"
     if concepts_dir.exists():
         concepts = sorted(p.stem for p in concepts_dir.glob("*.md"))
         if concepts:
@@ -2600,7 +2608,7 @@ def print_list(kb_dir: Path) -> None:
                 click.echo(f"  - {c}")
 
     # Display entities
-    entities_dir = kb_dir / "wiki" / "entities"
+    entities_dir = wiki_root / "entities"
     if entities_dir.exists():
         entities = sorted(p.stem for p in entities_dir.glob("*.md"))
         if entities:
@@ -2609,7 +2617,7 @@ def print_list(kb_dir: Path) -> None:
                 click.echo(f"  - {e}")
 
     # Display reports
-    reports_dir = kb_dir / "wiki" / "reports"
+    reports_dir = wiki_root / "reports"
     if reports_dir.exists():
         reports = sorted(p.name for p in reports_dir.glob("*.md"))
         if reports:
@@ -2632,7 +2640,7 @@ def list_cmd(ctx):
 
 def print_status(kb_dir: Path) -> None:
     """Print knowledge base status. Usable from CLI and chat REPL."""
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     subdirs = ["sources", "summaries", "concepts", "entities", "reports"]
 
     # Print the active KB path as the first line. Agents and scripts
@@ -3548,14 +3556,15 @@ def initialize_kb(
 
     kb_dir.mkdir(parents=True, exist_ok=True)
     (kb_dir / "raw").mkdir(exist_ok=True)
-    (kb_dir / "wiki" / "sources" / "images").mkdir(parents=True, exist_ok=True)
-    (kb_dir / "wiki" / "summaries").mkdir(parents=True, exist_ok=True)
-    (kb_dir / "wiki" / "concepts").mkdir(parents=True, exist_ok=True)
-    (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
+    wiki_root = resolve_wiki_dir(kb_dir)
+    (wiki_root / "sources" / "images").mkdir(parents=True, exist_ok=True)
+    (wiki_root / "summaries").mkdir(parents=True, exist_ok=True)
+    (wiki_root / "concepts").mkdir(parents=True, exist_ok=True)
+    (wiki_root / "entities").mkdir(parents=True, exist_ok=True)
 
-    atomic_write_text(kb_dir / "wiki" / "AGENTS.md", AGENTS_MD)
-    atomic_write_text(kb_dir / "wiki" / "index.md", INDEX_SEED)
-    atomic_write_text(kb_dir / "wiki" / "log.md", "# Operations Log\n\n")
+    atomic_write_text(wiki_root / "AGENTS.md", AGENTS_MD)
+    atomic_write_text(wiki_root / "index.md", INDEX_SEED)
+    atomic_write_text(wiki_root / "log.md", "# Operations Log\n\n")
 
     openkb_dir.mkdir()
     # Seed config.yaml: an explicit model wins; otherwise inherit the
@@ -3646,10 +3655,11 @@ def get_kb_list(kb_dir: Path) -> dict[str, Any]:
             }
         )
 
-    summaries_dir = kb_dir / "wiki" / "summaries"
-    concepts_dir = kb_dir / "wiki" / "concepts"
-    entities_dir = kb_dir / "wiki" / "entities"
-    reports_dir = kb_dir / "wiki" / "reports"
+    wiki_root = resolve_wiki_dir(kb_dir)
+    summaries_dir = wiki_root / "summaries"
+    concepts_dir = wiki_root / "concepts"
+    entities_dir = wiki_root / "entities"
+    reports_dir = wiki_root / "reports"
     return {
         "documents": documents,
         "document_count": len(documents),
@@ -3668,7 +3678,7 @@ def get_kb_list(kb_dir: Path) -> dict[str, Any]:
 
 def get_kb_status(kb_dir: Path) -> dict[str, Any]:
     """Return structured status for the knowledge base (REST ``/status``)."""
-    wiki_dir = kb_dir / "wiki"
+    wiki_dir = resolve_wiki_dir(kb_dir)
     subdirs = ["sources", "summaries", "concepts", "reports"]
     directories = {}
     for subdir in subdirs:
@@ -3726,7 +3736,7 @@ async def run_lint_report(
     lint_ghosts_removed: int | None = None
     if fix:
         with kb_ingest_lock(kb_dir / ".openkb"):
-            files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
+            files_changed, ghosts = fix_broken_links(resolve_wiki_dir(kb_dir))
         lint_files_changed = files_changed
         lint_ghosts_removed = ghosts
 
@@ -3773,7 +3783,8 @@ async def run_lint_report(
     if echo:
         click.echo(knowledge_report)
 
-    reports_dir = kb_dir / "wiki" / "reports"
+    wiki_root = resolve_wiki_dir(kb_dir)
+    reports_dir = wiki_root / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     import datetime
 
@@ -3789,7 +3800,7 @@ async def run_lint_report(
         f"## Semantic\n\n{knowledge_report}\n"
     )
     report_path.write_text(report_content, encoding="utf-8")
-    append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
+    append_log(wiki_root, "lint", f"report → {report_path.name}")
     if echo:
         click.echo(f"\nReport written to {report_path}")
 

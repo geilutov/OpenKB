@@ -47,6 +47,7 @@ from openkb.config import (
     register_kb_alias,
     resolve_effective_config,
     resolve_kb_alias,
+    wiki_dir,
 )
 from openkb.log import append_log
 from openkb.watch_service import WatchRegistry
@@ -141,7 +142,7 @@ def _resolve_kb(value: str) -> Path:
 
 def _is_kb_dir(kb_dir: Path) -> bool:
     """A directory counts as a KB when it has both ``.openkb`` and ``wiki``."""
-    return (kb_dir / ".openkb").is_dir() and (kb_dir / "wiki").is_dir()
+    return (kb_dir / ".openkb").is_dir() and wiki_dir(kb_dir).is_dir()
 
 
 def _init_kb_for_api(
@@ -424,7 +425,7 @@ async def _stream_query(
     try:
         config = resolve_effective_config(kb_dir)[0]
         language = config.get("language", "en")
-        agent = build_query_agent(str(kb_dir / "wiki"), model, language=language, bundle=bundle)
+        agent = build_query_agent(str(wiki_dir(kb_dir)), model, language=language, bundle=bundle)
         final_answer = ""
         async for event in iter_agent_response_events(
             agent, request.question, run_config=run_config
@@ -441,7 +442,7 @@ async def _stream_query(
                     if request.save
                     else None
                 )
-                append_log(kb_dir / "wiki", "query", request.question)
+                append_log(wiki_dir(kb_dir), "query", request.question)
                 if await fastapi_request.is_disconnected():
                     break
                 yield _sse(
@@ -471,7 +472,7 @@ async def _stream_chat(
     yield _sse("start", {"endpoint": "chat", "session_id": session.id})
     run_config = build_run_config_from_bundle(session.model, bundle)
     try:
-        append_log(kb_dir / "wiki", "query", request.message)
+        append_log(wiki_dir(kb_dir), "query", request.message)
         agent = build_chat_session_agent(kb_dir, session, bundle=bundle)
         async for event in iter_chat_turn_events(
             agent, session, request.message, run_config=run_config

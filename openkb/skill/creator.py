@@ -202,7 +202,9 @@ async def run_skill_create(
     forwarded to :func:`build_skill_create_agent`; ``None`` (CLI default)
     preserves the existing behavior.
     """
-    wiki_root = str(kb_dir / "wiki")
+    from openkb.config import wiki_dir
+
+    wiki_root = str(wiki_dir(kb_dir))
     skill_root = skill_dir(kb_dir, skill_name)
 
     agent = build_skill_create_agent(

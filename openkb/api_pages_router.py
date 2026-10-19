@@ -23,6 +23,7 @@ from openkb.api_models import (
     PageRequest,
     PageResponse,
 )
+from openkb.config import wiki_dir as resolve_wiki_dir
 from openkb.page_ops import delete_wiki_page, edit_wiki_page, page_link_context
 
 pages_router = APIRouter()
@@ -34,7 +35,7 @@ async def page_endpoint(
     _: None = Depends(require_bearer_token),
 ) -> PageResponse:
     kb_dir = _resolve_kb(request.kb)
-    wiki_dir = (kb_dir / "wiki").resolve()
+    wiki_dir = resolve_wiki_dir(kb_dir).resolve()
     rel = request.path if request.path.endswith(".md") else f"{request.path}.md"
     target = (wiki_dir / rel).resolve()
     if not target.is_relative_to(wiki_dir):

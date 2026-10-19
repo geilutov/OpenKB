@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from openkb.api_helpers import _resolve_kb, require_bearer_token
 from openkb.api_models import GraphRequest, GraphResponse
+from openkb.config import wiki_dir
 
 graph_router = APIRouter()
 
@@ -26,7 +27,7 @@ async def graph_endpoint(
     kb_dir = _resolve_kb(request.kb)
     from openkb.visualize import build_graph
 
-    graph = await run_in_threadpool(build_graph, kb_dir / "wiki")
+    graph = await run_in_threadpool(build_graph, wiki_dir(kb_dir))
     return GraphResponse(**graph)
 
 
@@ -41,5 +42,5 @@ async def graph_html_endpoint(
     kb_dir = _resolve_kb(kb)
     from openkb.visualize import build_graph, render_html
 
-    html = await run_in_threadpool(lambda: render_html(build_graph(kb_dir / "wiki")))
+    html = await run_in_threadpool(lambda: render_html(build_graph(wiki_dir(kb_dir))))
     return HTMLResponse(content=html)
